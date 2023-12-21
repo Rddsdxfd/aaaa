@@ -28,7 +28,7 @@ def handle_video(message):
         
         cap = cv2.VideoCapture(temp_video_file_path)
         fps = cap.get(cv2.CAP_PROP_FPS)
-        delay = int(1000 / fps)
+        delay = int(1000 / fps) if fps > 0 else 0
         
         extracted_text = []
         seen_hashes = set()
@@ -70,10 +70,13 @@ def handle_video(message):
         cap.release()
         os.unlink(temp_video_file_path)
 
+        chunk_size = 4096  # Define your desired chunk size
+
         if not extracted_text:
             bot.reply_to(message, "No subtitles were found in the video.")
         else:
-            bot.reply_to(message, '\n'.join(extracted_text))
+            for chunk in [extracted_text[i:i+chunk_size] for i in range(0, len(extracted_text), chunk_size)]:
+                bot.reply_to(message, '\n'.join(chunk))
     except Exception as e:
         bot.reply_to(message, f"An error occurred: {str(e)}")
 
