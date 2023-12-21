@@ -1,11 +1,11 @@
 import telebot
-from telebot import types
 import cv2
 import numpy as np
 import requests
 import tempfile
 import os
 import hashlib
+import time
 
 bot = telebot.TeleBot("6804743920:AAGRDbPzDL84SGTGRrg509-uFUz6eUoiW8c")
 ocr_api_key = "K83630869488957"
@@ -77,6 +77,7 @@ def handle_video(message):
         else:
             for chunk in [extracted_text[i:i+chunk_size] for i in range(0, len(extracted_text), chunk_size)]:
                 bot.reply_to(message, '\n'.join(chunk))
+                time.sleep(1)  # Add a delay between messages to avoid message length issues
     except Exception as e:
         bot.reply_to(message, f"An error occurred: {str(e)}")
 
