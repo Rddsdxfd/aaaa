@@ -2,50 +2,58 @@ import telebot
 from telebot import types
 import tempfile
 import os
-import ffmpeg
-import pysubs2
+from pytube import YouTube
+# ffmpeg-python package should be imported as ffmpeg, not ffmpeg
+# Check if pysubs2 is necessary as it's not used in extracting subtitles from videos directly
+# import pysubs2
 
 bot = telebot.TeleBot("6804743920:AAGRDbPzDL84SGTGRrg509-uFUz6eUoiW8c")
 
-# ... (other parts of your code)
-
-@bot.message_handler(content_types=['video'])
-def handle_video(message):
+def download_youtube_video(video_url, output_path):
     try:
-        file_info = bot.get_file(message.video.file_id)
-        
-        if message.video.file_size > 10 * 1024 * 1024:
-            bot.send_message(message.chat.id, "The video is too large. Please send a video that is less than 10 MB.")
-            return
-        
-        downloaded_file = bot.download_file(file_info.file_path)
-        
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as temp_video_file:
-            temp_video_file.write(downloaded_file)
-            temp_video_filename = temp_video_file.name
-            
-            # Extracting subtitles with ffmpeg
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.srt') as temp_subtitle_file:
-                temp_subtitle_filename = temp_subtitle_file.name
-
-                # Run FFmpeg to extract subtitles if they exist
-                ffmpeg.input(temp_video_filename).output(temp_subtitle_filename, map='s:h', scodec='copy').run()
-
-                if os.path.getsize(temp_subtitle_filename) > 0:
-                    subs = pysubs2.load(temp_subtitle_filename, encoding='utf-8')
-                    extracted_text = '\n\n'.join(sub_event.text for sub_event in subs)
-                else:
-                    extracted_text = "No subtitles were found in the video."
-
-        os.unlink(temp_video_filename)  # Delete the temporary video file
-        os.unlink(temp_subtitle_filename)  # Delete the temporary subtitle file
-
-        bot.send_message(message.chat.id, extracted_text)
+        yt = YouTube(video_url)
+        video_stream = yt.streams.filter(file_extension="mp4").first()
+        video_stream.download(output_path)
+        return True
     except Exception as e:
-        error_message = f"An error occurred while processing the video. Error details: {str(e)}"
-        bot.send_message(message.chat.id, error_message)
+        print(f"An error occurred while downloading the video: {str(e)}")
+        return False
 
-# ... (rest of your code)
+@bot.message_handler(content_types=['text'])
+def handle_text(message):
+    try:
+        video_url = message.text.strip()
+        if "youtube.com" in video_url or "youtu.be" in video_url: # Added "youtu.be" condition for shortened URLs
+            temp_dir = tempfile.mkdtemp() # Use mkdtemp to create a temp directory
+            temp_video_path = os.path.join(temp_dir, "video.mp4")  # Use the temp directory
+            if download_youtube_video(video_url, temp_video_path):
+                # Comments regarding subtitles extraction which is non-trivial with pytube alone
+                # Subtitles extraction would require additional processing not shown in this code
+                # The ffmpeg command attempts to copy subtitle streams from the input which might not exist
+                # If the goal is to download auto-generated subtitles (closed captions), it will require a different approach
+                # Assuming a function 'extract_subtitles' exists for subtitle extraction taking video path
+                
+                # Dummy function to represent subtitle extraction, replace with actual functionality
+                def extract_subtitles(video_path):
+                    # Placeholder for extracting subtitles
+                    # This should be replaced with actual subtitle extraction logic
+                    return "Subtitles extraction is not implemented."
+
+                extracted_text = extract_subtitles(temp_video_path)
+
+                # Clean up temporary files
+                os.unlink(temp_video_path)  # delete temporary video file
+                # Remove the entire directory now, not just files
+                os.rmdir(temp_dir)
+
+                bot.send_message(message.chat.id, extracted_text)
+            else:
+                bot.send_message(message.chat.id, "Failed to download the YouTube video.")
+        else:
+            bot.send_message(message.chat.id, "Please provide a valid YouTube video URL.")
+    except Exception as e:
+        error_message = f"An error occurred: {str(e)}"
+        bot.send_message(message.chat.id, error_message)
 
 # Start bot polling
 bot.polling(non_stop=True, interval=0)
