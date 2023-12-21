@@ -52,8 +52,15 @@ def handle_video(message):
                     data={'apikey': ocr_api_key}
                 )
                 result = response.json()
-                extracted_text.append(result['ParsedResults'][0]['ParsedText'])
-        
+
+                # Check if 'ParsedResults' exists and is not empty
+                if 'ParsedResults' in result and result['ParsedResults']:
+                    parsed_text = result['ParsedResults'][0].get('ParsedText', '')
+                    
+                    # Check if 'ParsedText' is not empty
+                    if parsed_text:
+                        extracted_text.append(parsed_text)
+
         cap.release()
         os.unlink(temp_video_file_path)
 
@@ -65,3 +72,4 @@ def handle_video(message):
         bot.reply_to(message, f"An error occurred: {str(e)}")
 
 bot.polling(non_stop=True, interval=0)
+
