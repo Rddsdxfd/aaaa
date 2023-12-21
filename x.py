@@ -1,56 +1,66 @@
 import telebot
+from telebot import types
+import cv2
+import numpy as np
+import pytesseract
+import re
 import tempfile
 import os
-import shutil
-import youtube_dl
 
 bot = telebot.TeleBot("6804743920:AAGRDbPzDL84SGTGRrg509-uFUz6eUoiW8c")
 
-def download_youtube_video(video_url, output_path):
+# ... (other parts of your code)
+
+@bot.message_handler(content_types=['video'])
+def handle_video(message):
     try:
-        ydl_opts = {'outtmpl': output_path}
-        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([video_url])
-        return True
-    except Exception as e:
-        print(f"An error occurred while downloading the video: {str(e)}")
-        return False
+        file_info = bot.get_file(message.video.file_id)
+        
+        if message.video.file_size > 10 * 1024 * 1024:
+            bot.send_message(message.chat.id, "The video is too large.")
+            return
+        
+        downloaded_file = bot.download_file(file_info.file_path)
+        nparr = np.frombuffer(downloaded_file, np.uint8)
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as temp_file:
+            temp_file.write(nparr)
+            temp_filename = temp_file.name
 
-def extract_subtitles(video_url):
-    try:
-        ydl_opts = {
-            'writesubtitles': True,
-            'subtitlelangs': ['en'],  # You can specify the language of subtitles
-            'skip_download': True,
-        }
-        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-            result = ydl.extract_info(video_url, download=False)
-            return result['subtitles']['en'][0]['content'] if 'subtitles' in result else "No subtitles found."
-    except Exception as e:
-        print(f"An error occurred while extracting subtitles: {str(e)}")
-        return "Subtitles extraction failed."
+        cap = cv2.VideoCapture(temp_filename)
+        extracted_text = []
 
-@bot.message_handler(content_types=['text'])
-def handle_text(message):
-    try:
-        video_url = message.text.strip()
-        if "youtube.com" in video_url or "youtu.be" in video_url:
-            temp_dir = tempfile.mkdtemp()
-            temp_video_path = os.path.join(temp_dir, "video.mp4")
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
 
-            if download_youtube_video(video_url, temp_video_path):
-                extracted_text = extract_subtitles(video_url)
+            # Crop to the lower part of the frame where subtitles usually are
+            # You would have to determine these values by the resolution of your video
+            h, w = frame.shape[:2]
+            y1 = int(h * 0.8)  # start at 80% of the height
+            y2 = h  # go to the bottom of the frame
+            subtitle_frame = frame[y1:y2, 0:w]
 
-                shutil.rmtree(temp_dir)
-                bot.send_message(message.chat.id, extracted_text)
-            else:
-                bot.send_message(message.chat.id, "Failed to download the YouTube video.")
+            # Use pytesseract to extract text
+            text = pytesseract.image_to_string(subtitle_frame, lang='eng')  # Assuming subtitles are in English
+
+            # Clean and extract the text
+            text = text.strip()  # Remove whitespace
+            if text:  # If there's text, add it to the list
+                extracted_text.append(text)
+
+        cap.release()
+        os.unlink(temp_filename)  # Delete the temporary file
+
+        # Send the extracted text back as a message
+        if not extracted_text:
+            bot.send_message(message.chat.id, "No subtitles were found in the video.")
         else:
-            bot.send_message(message.chat.id, "Please provide a valid YouTube video URL.")
+            bot.send_message(message.chat.id, '\n'.join(extracted_text))
     except Exception as e:
-        error_message = f"An error occurred: {str(e)}"
-        bot.send_message(message.chat.id, error_message)
+        bot.send_message(message.chat.id, f"An error occurred: {str(e)}")
+
+# ... (rest of your code)
 
 # Start bot polling
 bot.polling(non_stop=True, interval=0)
-
