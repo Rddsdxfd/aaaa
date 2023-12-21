@@ -27,6 +27,9 @@ def handle_video(message):
             temp_video_file_path = temp_video_file.name
         
         cap = cv2.VideoCapture(temp_video_file_path)
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        delay = int(1000 / fps)
+        
         extracted_text = []
         seen_hashes = set()
 
@@ -60,6 +63,9 @@ def handle_video(message):
                     # Check if 'ParsedText' is not empty
                     if parsed_text:
                         extracted_text.append(parsed_text)
+
+            # Enforce the frame rate restriction
+            cv2.waitKey(delay)
 
         cap.release()
         os.unlink(temp_video_file_path)
