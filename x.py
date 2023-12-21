@@ -2,14 +2,13 @@ import telebot
 from telebot import types
 import cv2
 import numpy as np
-import pytesseract
-import re
+import requests
 import tempfile
 import os
+import hashlib
 
 bot = telebot.TeleBot("6804743920:AAGRDbPzDL84SGTGRrg509-uFUz6eUoiW8c")
-
-# ... (other parts of your code)
+ocr_api_key = "K83630869488957"
 
 @bot.message_handler(content_types=['video'])
 def handle_video(message):
@@ -17,50 +16,52 @@ def handle_video(message):
         file_info = bot.get_file(message.video.file_id)
         
         if message.video.file_size > 10 * 1024 * 1024:
-            bot.send_message(message.chat.id, "The video is too large.")
+            bot.reply_to(message, "The video is too large.")
             return
         
         downloaded_file = bot.download_file(file_info.file_path)
         nparr = np.frombuffer(downloaded_file, np.uint8)
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as temp_file:
-            temp_file.write(nparr)
-            temp_filename = temp_file.name
-
-        cap = cv2.VideoCapture(temp_filename)
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as temp_video_file:
+            temp_video_file.write(nparr)
+            temp_video_file_path = temp_video_file.name
+        
+        cap = cv2.VideoCapture(temp_video_file_path)
         extracted_text = []
+        seen_hashes = set()
 
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
                 break
 
-            # Crop to the lower part of the frame where subtitles usually are
-            # You would have to determine these values by the resolution of your video
+            frame_hash = hashlib.md5(frame.tobytes()).hexdigest()
+            if frame_hash in seen_hashes:
+                continue
+            seen_hashes.add(frame_hash)
+
             h, w = frame.shape[:2]
-            y1 = int(h * 0.8)  # start at 80% of the height
-            y2 = h  # go to the bottom of the frame
-            subtitle_frame = frame[y1:y2, 0:w]
+            subtitle_frame = frame[int(h * 0.8):h, 0:w]
 
-            # Use pytesseract to extract text
-            text = pytesseract.image_to_string(subtitle_frame, lang='eng')  # Assuming subtitles are in English
-
-            # Clean and extract the text
-            text = text.strip()  # Remove whitespace
-            if text:  # If there's text, add it to the list
-                extracted_text.append(text)
-
+            with tempfile.NamedTemporaryFile(suffix='.jpg') as temp_image_file:
+                cv2.imwrite(temp_image_file.name, subtitle_frame)
+                temp_image_file.seek(0)
+                response = requests.post(
+                    'https://api.ocr.space/parse/image',
+                    files={'image': temp_image_file},
+                    data={'apikey': ocr_api_key}
+                )
+                result = response.json()
+                extracted_text.append(result['ParsedResults'][0]['ParsedText'])
+        
         cap.release()
-        os.unlink(temp_filename)  # Delete the temporary file
+        os.unlink(temp_video_file_path)
 
-        # Send the extracted text back as a message
         if not extracted_text:
-            bot.send_message(message.chat.id, "No subtitles were found in the video.")
+            bot.reply_to(message, "No subtitles were found in the video.")
         else:
-            bot.send_message(message.chat.id, '\n'.join(extracted_text))
+            bot.reply_to(message, '\n'.join(extracted_text))
     except Exception as e:
-        bot.send_message(message.chat.id, f"An error occurred: {str(e)}")
+        bot.reply_to(message, f"An error occurred: {str(e)}")
 
-# ... (rest of your code)
-
-# Start bot polling
 bot.polling(non_stop=True, interval=0)
