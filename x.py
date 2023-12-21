@@ -1,6 +1,7 @@
 import telebot
 import tempfile
 import os
+import shutil  # Import shutil for rmtree
 from pytube import YouTube
 
 bot = telebot.TeleBot("6804743920:AAGRDbPzDL84SGTGRrg509-uFUz6eUoiW8c")
@@ -33,9 +34,8 @@ def handle_text(message):
 
                 extracted_text = extract_subtitles(temp_video_path)
 
-                # Clean up temporary files
-                # Remove the entire directory now, not just files
-                os.rmdir(temp_dir)
+                # Clean up temporary files and the directory
+                shutil.rmtree(temp_dir)
 
                 bot.send_message(message.chat.id, extracted_text)
             else:
@@ -48,4 +48,4 @@ def handle_text(message):
 
 # Start bot polling
 bot.polling(non_stop=True, interval=0)
-
+                                                  
