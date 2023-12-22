@@ -50,21 +50,24 @@ def extract_text_from_video(temp_filename, frame_limit_per_second=25):
     frame_count = 0
     while cap.isOpened():
         success, frame = cap.read()
-        if not success: break
+        if not success:
+            break
 
-        # Preprocessing for subtitle detection here (resize, grayscale, thresholding, etc.)
-        # ...
+        # Preprocessing for better OCR
+        denoised_frame = cv2.fastNlMeansDenoisingColored(frame, None, 10, 10, 7, 21)
+        enhanced_frame = cv2.equalizeHist(denoised_frame)
+        _, binary_frame = cv2.threshold(cv2.cvtColor(enhanced_frame, cv2.COLOR_BGR2GRAY), 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
         frame_id = int(round(cap.get(cv2.CAP_PROP_POS_FRAMES)))
         if frame_id % frame_interval == 0:
-            text = pytesseract.image_to_string(frame, lang='rus')
+            text = pytesseract.image_to_string(binary_frame, lang='rus', config='--psm 6')  # Adjust config if needed
             text = re.sub(r'[\W_]+', ' ', text, flags=re.UNICODE)
             extracted_text.append(text.strip())
-        
+
             frame_count += 1
             if frame_count >= frame_limit_per_second:
                 break
-    
+
     cap.release()
     # Postprocessing to remove duplicates and non-subtitle text
     return [line for line in set(extracted_text) if line]
@@ -73,4 +76,4 @@ def extract_text_from_video(temp_filename, frame_limit_per_second=25):
 
 # Start bot polling
 bot.polling(non_stop=True, interval=0)
-        
+            
