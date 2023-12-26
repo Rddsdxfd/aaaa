@@ -1,70 +1,73 @@
 import telebot
-from telebot import types
-import cv2
-import numpy as np
-import pytesseract
-import tempfile
-import os
-import re
-from contextlib import contextmanager
+import speech_recognition as sr  
+import torch
+import torchaudio
+from torchaudio.transforms import MelSpectrogram  
 
-# Make sure "YOUR_TELEGRAM_BOT_TOKEN" is replaced with your actual bot token.
 bot = telebot.TeleBot("6804743920:AAGRDbPzDL84SGTGRrg509-uFUz6eUoiW8c")
 
-@bot.message_handler(content_types=['video'])
-def handle_video(message):
+# Model and training 
+vocab = ["hi", "hello", "goodbye", "how", "are", "you", "doing", "thanks", "thank", "bye"]
+text_to_idx = {word: i for i, word in enumerate(vocab)}
+
+model = torch.nn.LSTM(input_size=40, hidden_size=20, num_layers=2, batch_first=True, dropout=0.1)
+model.flatten_parameters()
+optimizer = torch.optim.Adam(model.parameters()) 
+loss_fn = torch.nn.CrossEntropyLoss()
+
+mel_transform = MelSpectrogram(sample_rate=16000, n_mels=40)
+
+def text_to_target(text):
+    indexes = [text_to_idx.get(word, len(vocab)-1) for word in text.split(" ")]
+    return torch.tensor(indexes)
+
+def get_features(file):
+    waveform, _ = torchaudio.load(file)
+    return mel_transform(waveform)
+
+@bot.message_handler(commands=['start'])
+def start(message):
+    bot.send_message(message.chat.id,  
+        "Hi! I'm a bot that can learn from your voice. Send me a voice message and text of what you said to train me.")
+
+@bot.message_handler(content_types=['voice']) 
+def handle_voice(message):
+    file_info = bot.get_file(message.voice.file_id)
+    file = bot.download_file(file_info.file_path)
+    
     try:
-        # Restriction on video file size (>10MB)
-        if message.video.file_size > 10 * 1024 * 1024:  # 10MB limit
-            bot.send_message(message.chat.id, "The video is too large. Please upload a video smaller than 10MB.")
-            return
-        
-        file_info = bot.get_file(message.video.file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
-        
-        nparr = np.frombuffer(downloaded_file, np.uint8)
-        with temporary_file(nparr) as temp_filename:
-            extracted_text = extract_text_from_video(temp_filename)
-            bot.send_message(message.chat.id, '\n'.join(extracted_text) if extracted_text else "No text found.")
+        features = get_features(file)
     except Exception as e:
-        bot.send_message(message.chat.id, f"An error occurred: {e}")
-
-@contextmanager
-def temporary_file(nparr):
-    # Creates a temporary file to save the video for processing.
+        bot.reply_to(message, "Error getting audio features: " + str(e)) 
+        return
+    
+    recognizer = sr.Recognizer()
     try:
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
-        temp_file.write(nparr)
-        temp_file.close()
-        yield temp_file.name
-    finally:
-        if os.path.exists(temp_file.name):
-            os.unlink(temp_file.name)
-
-def extract_text_from_video(temp_filename, frame_limit_per_second=25):
-    cap = cv2.VideoCapture(temp_filename)
-    extracted_text = []
-    fps = cap.get(cv2.CAP_PROP_FPS)  # Gets the frames per second of the video
-    frame_interval = int(max(1, fps / frame_limit_per_second))  # Avoid division by zero
-
-    while cap.isOpened():
-        success, frame = cap.read()
-        if not success:
-            break
-
-        frame_id = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
-        if frame_id % frame_interval == 0:
-            # Process the frame for OCR
-            gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            denoised_frame = cv2.fastNlMeansDenoising(gray_frame, None, 10, 10)
-            _, binary_frame = cv2.threshold(denoised_frame, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            text = pytesseract.image_to_string(binary_frame, lang='rus', config='--psm 6')  # Adjust config if needed
-            text = re.sub(r'[\W_]+', ' ', text, flags=re.UNICODE)
-            extracted_text.append(text.strip())
-
-    cap.release()
-    # Postprocessing to remove duplicates and non-subtitle text
-    return list(set(filter(None, extracted_text)))  # Remove empty strings and duplicates
-
-# Start bot polling
-bot.polling(non_stop=True, interval=0)
+        with sr.AudioFile(file) as source:
+            audio = recognizer.record(source)  
+        text = recognizer.recognize_google(audio) 
+    except Exception as e:  
+        bot.reply_to(message, "Error recognizing text: " + str(e))
+        return
+            
+    try:
+        targets = text_to_target(text) 
+    except Exception as e:
+        bot.reply_to(message, "Error converting text: " + str(e))
+        return
+            
+    loss = train_step(features, targets)
+            
+    bot.reply_to(message, f"Thanks for the audio! Loss after training: {loss:.3f}")
+    
+def train_step(inputs, targets):
+    outputs = model(inputs.unsqueeze(0))
+    loss = loss_fn(outputs.transpose(1, 2), targets.unsqueeze(0))
+    
+    model.zero_grad()
+    loss.backward()
+    optimizer.step()
+    
+    return loss.item()
+    
+bot.polling()
